@@ -1,0 +1,2 @@
+#!/bin/sh
+ghcid -W --test "MemoryMaster.run"

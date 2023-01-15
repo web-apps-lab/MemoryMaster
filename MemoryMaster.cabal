@@ -1,0 +1,50 @@
+cabal-version:      2.4
+name:               MemoryMaster
+version:            0.1.0.0
+homepage:           https://github.com/web-apps-top/MemoryMaster/README.md
+bug-reports:        https://github.com/web-apps-top/MemoryMaster/issues
+synopsis:           MemoryMaster
+description:        MemoryMaster
+license-file:       LICENSE
+author:             Fabien Boucher
+maintainer:         web.apps.top@gmail.com
+copyright:          2023 Fabien Boucher
+extra-source-files:
+    README.md
+
+common common-options
+    default-language: Haskell2010
+    default-extensions: LambdaCase
+                      , NoImplicitPrelude
+                      , OverloadedStrings
+                      , RecordWildCards
+                      , NamedFieldPuns
+                      , DeriveGeneric
+                      , DataKinds
+                      , OverloadedRecordDot
+                      , QuasiQuotes
+                      , TypeOperators
+                      , TypeApplications
+                      , TupleSections
+    ghc-options:      -Wall
+
+    build-depends:    base < 5
+                    , butler
+
+library
+    import:           common-options
+    exposed-modules:  MemoryMaster
+                    , MemoryMaster.Engine
+    build-depends:
+    hs-source-dirs:   src
+
+executable MemoryMaster
+    import:           common-options
+    main-is:          Main.hs
+
+    build-depends:    MemoryMaster
+
+    hs-source-dirs:   app
+    default-language: Haskell2010
+    ghc-options:      -Wall
+                      -threaded
