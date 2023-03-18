@@ -200,8 +200,9 @@ renderCard wid cols appStateV cardId = do
             img_ [src_ $ getSVGInline appState]
       Card _ TurnedMatchFail -> do
         div_ [class_ boxes_style] $
-          div_ [class_ "bg-red-300"] $
-            img_ [src_ $ getSVGInline appState]
+          div_ [class_ "bg-red-300 cursor-pointer"] $
+            withEvent wid "clickCard" [cardIdHX] $
+              img_ [src_ $ getSVGInline appState]
       Card _ TurnedWaitPair -> do
         div_ [class_ boxes_style] $
           div_ [class_ "bg-gray-100"] $
