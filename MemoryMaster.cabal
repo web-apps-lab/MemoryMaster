@@ -30,6 +30,17 @@ common common-options
 
     build-depends:    base < 5
                     , butler
+                    , aeson
+                    , base64-bytestring
+                    , bytestring
+                    , containers
+                    , file-embed
+                    , filepath
+                    , random
+                    , random-shuffle
+                    , serialise
+                    , text
+                    , witch
 
 library
     import:           common-options

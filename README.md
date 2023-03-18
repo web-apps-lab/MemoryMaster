@@ -1,5 +1,7 @@
 # Memory Master
 
+Project status: Work In Progress
+
 ## Start Memory Master via the nix flake
 
 Run from the nix flake:
