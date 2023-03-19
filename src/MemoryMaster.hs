@@ -6,11 +6,14 @@ module MemoryMaster (run, memoryMasterApp) where
 
 import Butler
 import Butler.Auth (PageDesc (PageDesc), PageTitle (..))
-import Butler.Database (Database, dbSimpleCreate, withDatabase)
+import Butler.Database (Database, NamedParam ((:=)), dbExecute, dbQuery, dbSimpleCreate, withDatabase)
 import Data.Aeson (Value (Number))
 import qualified Data.ByteString.Base64 as B64 (encode)
 import Data.ByteString.Char8 as C8 (unpack)
+import Data.Time (defaultTimeLocale, diffUTCTime, formatTime)
+import qualified Database.SQLite.Simple as DB
 import MemoryMaster.Engine
+import Text.Printf (printf)
 import Prelude
 
 memoryMasterApp :: Database -> App
@@ -32,10 +35,55 @@ run =
       spawnInitProcess ".butler-storage" $
         withDatabase "leaderboard" migrations runApp
   where
-    migrations = dbSimpleCreate "scores" "id INTEGER PRIMARY KEY, name TEXT, date DATE, duration REAL, level TEXT"
+    migrations =
+      dbSimpleCreate
+        "scores"
+        "id INTEGER PRIMARY KEY, name TEXT, date DATE, duration REAL, clicks INTEGER, collection TEXT"
     runApp db =
       let app = memoryMasterApp db
        in serveApps (publicDisplayApp (PageTitle app.title) (Just $ PageDesc app.description)) [app]
+
+data Score = Score
+  { scoreId :: Int,
+    scoreName :: Text,
+    scoreDate :: UTCTime,
+    scoreDuration :: Float,
+    scoreClicks :: Int,
+    scoreCollection :: Text
+  }
+  deriving (Show)
+
+instance DB.FromRow Score where
+  fromRow =
+    Score
+      <$> DB.field
+      <*> DB.field
+      <*> DB.field
+      <*> DB.field
+      <*> DB.field
+      <*> DB.field
+
+addScore :: Database -> Text -> UTCTime -> Float -> Int -> Text -> IO ()
+addScore db name date duration clicksCount collection =
+  dbExecute
+    db
+    "INSERT INTO scores (name, date, duration, clicks, collection) VALUES (:name,:date,:duration,:clicks,:collection)"
+    [ ":name" := name,
+      ":date" := date,
+      ":duration" := duration,
+      ":clicks" := clicksCount,
+      ":collection" := collection
+    ]
+
+getTopScores :: Database -> Integer -> Text -> IO [Score]
+getTopScores db limit collection =
+  dbQuery
+    db
+    "SELECT * from scores WHERE collection = :collection ORDER BY duration ASC, clicks ASC LIMIT :limit"
+    [":collection" := collection, ":limit" := show limit]
+
+diffTimeToFloat :: UTCTime -> UTCTime -> Float
+diffTimeToFloat a b = realToFrac $ diffUTCTime a b
 
 startMM :: Database -> AppContext -> ProcessIO ()
 startMM db ctx = do
@@ -45,16 +93,17 @@ startMM db ctx = do
         AppState
           { collectionName,
             board,
-            gameState = Play $ Progress NoCardTurned,
+            gameState = Play Wait,
             cardsToRender = mempty
           }
       memAddr = "memory-master-" <> showT ctx.wid <> ".bin"
   (_, appStateM) <- newProcessMemory (from memAddr) (pure appState)
+  spawnThread_ $ asyncTimerUpdateThread appStateM ctx.clients
   forever $ do
     res <- atomically (readPipe ctx.pipe)
     case res of
       AppDisplay _ -> do
-        let app = renderApp ctx.wid svgs appStateM db
+        app <- liftIO $ renderApp ctx.wid svgs appStateM db
         sendHtmlOnConnect app res
       AppTrigger ev -> do
         case ev.trigger of
@@ -68,36 +117,50 @@ startMM db ctx = do
                 s
                   { board = newBoard,
                     cardsToRender = mempty,
-                    gameState = Play $ Progress NoCardTurned
+                    gameState = Play Wait
                   }
             sendsHtml ctx.clients $ renderBoard ctx.wid svgs appStateM
+            sendsHtml ctx.clients $ renderPlayStatus appStateM
+            sendsHtml ctx.clients $ renderTimer 0.0
           TriggerName "clickCard" -> do
             logInfo "Got <clickCard> game event" ["body" .= ev.body]
             case ev.body ^? key "index" . _Integer of
               Just _index -> do
-                logInfo "Here" []
-                let index = fromInteger $ toInteger _index
+                now <- liftIO getCurrentTime
                 newState <- atomically $ do
                   modifyMemoryVar appStateM flipSuccFail
-                  modifyMemoryVar appStateM (handleCardClick index)
+                  modifyMemoryVar appStateM (handleCardClick (fromInteger $ toInteger _index) now)
                   readMemoryVar appStateM
-                mapM_ (sendsHtml ctx.clients . renderCard ctx.wid svgs appStateM) newState.cardsToRender
+                mapM_
+                  (sendsHtml ctx.clients . renderCard ctx.wid svgs appStateM)
+                  newState.cardsToRender
+                sendsHtml ctx.clients $ renderPlayStatus appStateM
+                case newState.gameState of
+                  Play (Win start playDuration clicksCount) -> do
+                    liftIO $ addScore db "Guest" start playDuration clicksCount ""
+                    leaderBoard <- liftIO $ renderLeaderBoard db
+                    sendsHtml ctx.clients leaderBoard
+                  _ -> pure ()
               Nothing -> pure ()
           _ -> pure ()
         pure ()
       _ -> pure ()
   where
-    handleCardClick :: CardId -> AppState -> AppState
-    handleCardClick cardId appState =
+    asyncTimerUpdateThread :: MemoryVar AppState -> DisplayClients -> ProcessIO Void
+    asyncTimerUpdateThread appStateM clients = forever $ do
+      appState <- atomically $ readMemoryVar appStateM
+      case appState.gameState of
+        Play (Progress startTime _ _) -> do
+          diffT <- liftIO $ diffTime startTime
+          sendsHtml clients $ renderTimer diffT
+        _ -> pure ()
+      sleep 990
+    handleCardClick :: CardId -> UTCTime -> AppState -> AppState
+    handleCardClick cardId clickAtTime appState =
       let newAppState = case appState.gameState of
-            Play Wait -> appState {gameState = Play (Progress NoCardTurned)}
-            Play (Progress NoCardTurned) ->
-              appState
-                { gameState = Play (Progress $ OneCardTurned cardId),
-                  board = setCardStatus cardId TurnedWaitPair appState.board,
-                  cardsToRender = appState.cardsToRender <> [cardId]
-                }
-            Play (Progress (OneCardTurned turnedCardId)) -> do
+            Play Wait -> justFlip cardId clickAtTime 0 appState
+            Play (Progress startTime clicksCount NoCardTurned) -> justFlip cardId startTime clicksCount appState
+            Play (Progress startTime clicksCount (OneCardTurned turnedCardId)) -> do
               let isPairTurned =
                     getCardName appState.board turnedCardId == getCardName appState.board cardId
                       && turnedCardId /= cardId
@@ -116,13 +179,24 @@ startMM db ctx = do
                             setCardStatus turnedCardId TurnedMatchFail appState.board,
                           [cardId, turnedCardId]
                         )
+                  gameState =
+                    if isWinBoard board
+                      then Play (Win startTime (diffTimeToFloat clickAtTime startTime) clicksCount)
+                      else Play (Progress startTime (clicksCount + 1) NoCardTurned)
                in appState
-                    { gameState = Play (Progress NoCardTurned),
+                    { gameState,
                       board,
                       cardsToRender = appState.cardsToRender <> cardsToRender
                     }
             _ -> appState
        in trace (show newAppState) newAppState
+    justFlip :: CardId -> StartTime -> ClicksCount -> AppState -> AppState
+    justFlip cardId startTime clicksCount appState =
+      appState
+        { gameState = Play (Progress startTime (clicksCount + 1) $ OneCardTurned cardId),
+          board = setCardStatus cardId TurnedWaitPair appState.board,
+          cardsToRender = appState.cardsToRender <> [cardId]
+        }
     flipSuccFail :: AppState -> AppState
     flipSuccFail appState =
       let Board cards = appState.board
@@ -147,10 +221,12 @@ withEvent wid tId tAttrs elm = with elm ([id_ (withWID wid tId), wsSend' ""] <> 
   where
     wsSend' = makeAttribute "ws-send"
 
-renderApp :: WinID -> SVGCollections -> MemoryVar AppState -> Database -> HtmlT STM ()
-renderApp wid cols appStateM _db = do
-  appState <- lift $ readMemoryVar appStateM
-  div_ [id_ (withWID wid "w"), class_ "container mx-auto"] $ do
+renderApp :: WinID -> SVGCollections -> MemoryVar AppState -> Database -> IO (HtmlT STM ())
+renderApp wid cols appStateM db = do
+  appState <- atomically $ readMemoryVar appStateM
+  leaderboard <- renderLeaderBoard db
+  timerStatus <- renderTimerStatus appStateM
+  pure $ div_ [id_ (withWID wid "w"), class_ "container mx-auto"] $ do
     div_ [id_ (withWID wid "w"), class_ "flex flex-row justify-center"] $ do
       div_ [id_ "MSMain", class_ "min-w-fit max-w-fit border-2 rounded border-gray-400 bg-gray-100"] $ do
         div_ [id_ "AppMain", class_ "flex flex-row justify-center"] $ do
@@ -158,12 +234,14 @@ renderApp wid cols appStateM _db = do
             div_ [class_ "flex-col justify-between h-full"] $ do
               div_ [class_ "flex justify-around m-1"] $ do
                 button "clickMenu" "Menu"
+                renderPlayStatus appStateM
+                timerStatus
                 button "clickRestart" "Restart"
               case appState.gameState of
                 Play _ -> do
                   div_ [class_ ""] $ do
                     renderBoard wid cols appStateM
-                -- renderLeaderBoard
+                    leaderboard
                 _ -> p_ "Menu"
               div_ [class_ "bg-indigo-100"] $ do
                 p_ "Footer"
@@ -183,6 +261,41 @@ renderBoard wid cols appStateV = do
     div_ [class_ "basis-1/2 min-w-fit grow bg-green-400"] $ do
       div_ [class_ "m-2 grid grid-flow-row-dense gap-2 grid-cols-6 grid-rows-3 justify-items-center"] $ do
         mapM_ (renderCard wid cols appStateV) [0 .. 23]
+
+renderPlayStatus :: MemoryVar AppState -> HtmlT STM ()
+renderPlayStatus appStateM = do
+  appState <- lift $ readMemoryVar appStateM
+  case appState.gameState of
+    Play (Win {}) -> render "You Win !"
+    Play (Progress {}) -> render "Started - Good luck"
+    Play Wait -> render "Waiting"
+    Menu -> render $ div_ "In Menu"
+  where
+    render :: HtmlT STM () -> HtmlT STM ()
+    render = div_ [id_ "PlayStatus"]
+
+renderTimerStatus :: MemoryVar AppState -> IO (HtmlT STM ())
+renderTimerStatus appStateM = do
+  appState <- atomically $ readMemoryVar appStateM
+  case appState.gameState of
+    Play (Win _ playDuration _) -> pure $ renderTimer playDuration
+    Play (Progress startTime _ _) -> do
+      diffT <- diffTime startTime
+      pure $ renderTimer diffT
+    Play Wait -> pure $ renderTimer 0.0
+    Menu -> pure $ pure ()
+
+renderTimer :: Float -> HtmlT STM ()
+renderTimer duration = do
+  div_ [id_ "Timer", class_ "w-24 text-right pr-1"] $ toHtml $ toDurationString duration
+
+diffTime :: UTCTime -> IO Float
+diffTime startTime = do
+  atTime <- liftIO getCurrentTime
+  pure $ diffTimeToFloat atTime startTime
+
+toDurationString :: Float -> String
+toDurationString = printf "%1.f"
 
 renderCard :: WinID -> SVGCollections -> MemoryVar AppState -> CardId -> HtmlT STM ()
 renderCard wid cols appStateV cardId = do
@@ -218,9 +331,30 @@ renderCard wid cols appStateV cardId = do
     cardIdHX = encodeVal [("index", Number $ fromInteger $ toInteger cardId)]
     cardDivId = from $ "Card" <> show cardId
 
--- renderLeaderBoard :: HtmlT STM ()
--- renderLeaderBoard = do
---   div_ [class_ "basis-1/2 min-w-min grow bg-pink-400"] $ do
---     p_ "LeaderBoard"
---     p_ "Elsa"
---     p_ "Fabien"
+renderLeaderBoard :: Database -> IO (HtmlT STM ())
+renderLeaderBoard db = do
+  scores <- getTopScores db 10 ""
+  pure $
+    div_ [id_ "LeaderBoard"] $
+      case length scores of
+        0 -> p_ "The leaderboard is empty. Be the first to appear here !"
+        _ -> ol_ [] $ do
+          header
+          mapM_ displayScoreLine scores
+  where
+    displayScoreLine :: Score -> HtmlT STM ()
+    displayScoreLine Score {..} = do
+      li_ [] $ div_ [class_ "grid grid-cols-5 gap-1 text-left"] $ do
+        div_ [class_ "col-span-1"] $
+          toHtml $
+            formatTime defaultTimeLocale "%F" scoreDate
+        div_ [class_ "col-span-2"] $ toHtml scoreName
+        div_ [class_ "col-span-1"] $ toHtml (show scoreClicks)
+        div_ [class_ "col-span-1 text-right"] $ toHtml $ toDurationString scoreDuration
+    header :: HtmlT STM ()
+    header = do
+      li_ [] $ div_ [class_ "grid grid-cols-5 gap-1 border border-gray-600 font-semibold text-left"] $ do
+        div_ [class_ "col-span-1"] "Date"
+        div_ [class_ "col-span-2"] "Name"
+        div_ [class_ "col-span-1"] "Clicks"
+        div_ [class_ "col-span-1 text-right"] "Play time"

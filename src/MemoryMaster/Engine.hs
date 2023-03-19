@@ -35,14 +35,19 @@ newtype Board = Board [Card] deriving (Show, Generic)
 
 type CardId = Int
 
+type StartTime = UTCTime
+
+type PlayDuration = Float
+
+type ClicksCount = Int
+
 data ProgressState = NoCardTurned | OneCardTurned CardId
   deriving (Show, Generic)
 
 data PlayState
   = Wait
-  | Win
-  | Loose
-  | Progress ProgressState
+  | Win StartTime PlayDuration ClicksCount
+  | Progress StartTime ClicksCount ProgressState
   deriving (Show, Generic)
 
 data GameState = Menu | Play PlayState
@@ -96,6 +101,15 @@ setCardStatus cardId cardStatus (Board cards) = do
 
 getCardByCardId :: Board -> CardId -> Card
 getCardByCardId (Board cards) cardId = cards !! cardId
+
+isWinBoard :: Board -> Bool
+isWinBoard (Board cards) = all isTurnedSucc cards
+  where
+    isTurnedSucc :: Card -> Bool
+    isTurnedSucc card = case card.cardStatus of
+      Turned -> True
+      TurnedMatchSucc -> True
+      _ -> False
 
 newtype SVGs = SVGs {unSVGs :: Map.Map SVGName SVG}
   deriving (Show)

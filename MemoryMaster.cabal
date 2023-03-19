@@ -39,7 +39,9 @@ common common-options
                     , random
                     , random-shuffle
                     , serialise
+                    , sqlite-simple
                     , text
+                    , time
                     , witch
 
 library
