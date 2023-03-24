@@ -107,8 +107,8 @@ startMM db ctx = do
         sendHtmlOnConnect app res
       AppTrigger ev -> do
         case ev.trigger of
-          TriggerName "clickMenu" -> do
-            logInfo "Got <clickMenu> game event" []
+          -- TriggerName "clickMenu" -> do
+          --   logInfo "Got <clickMenu> game event" []
           TriggerName "clickRestart" -> do
             logInfo "Got <clickRestart> game event" []
             (newBoard, _) <- liftIO $ mkBoard svgs
@@ -189,7 +189,7 @@ startMM db ctx = do
                       cardsToRender = appState.cardsToRender <> cardsToRender
                     }
             _ -> appState
-       in trace (show newAppState) newAppState
+       in newAppState
     justFlip :: CardId -> StartTime -> ClicksCount -> AppState -> AppState
     justFlip cardId startTime clicksCount appState =
       appState
@@ -221,6 +221,9 @@ withEvent wid tId tAttrs elm = with elm ([id_ (withWID wid tId), wsSend' ""] <> 
   where
     wsSend' = makeAttribute "ws-send"
 
+version :: Text
+version = "1.0.0"
+
 renderApp :: WinID -> SVGCollections -> MemoryVar AppState -> Database -> IO (HtmlT STM ())
 renderApp wid cols appStateM db = do
   appState <- atomically $ readMemoryVar appStateM
@@ -233,7 +236,7 @@ renderApp wid cols appStateM db = do
           div_ [class_ "grow min-w-min max-w-screen-2xl"] $ do
             div_ [class_ "flex-col justify-between h-full"] $ do
               div_ [class_ "flex justify-around m-1"] $ do
-                button "clickMenu" "Menu"
+                -- button "clickMenu" "Menu"
                 renderPlayStatus appStateM
                 timerStatus
                 button "clickRestart" "Restart"
@@ -243,8 +246,13 @@ renderApp wid cols appStateM db = do
                     renderBoard wid cols appStateM
                     leaderboard
                 _ -> p_ "Menu"
-              div_ [class_ "bg-indigo-100"] $ do
-                p_ "Footer"
+              div_ [class_ "flex flex-row gap-2 flex-row-reverse pr-2"] $ do
+                div_ [] (toHtml version)
+                a_
+                  [ class_ "text-blue-600",
+                    href_ "https://github.com/web-apps-lab/MemoryMaster"
+                  ]
+                  "MemoryMaster"
   where
     button :: Text -> Text -> HtmlT STM ()
     button evText text =
@@ -267,7 +275,7 @@ renderPlayStatus appStateM = do
   appState <- lift $ readMemoryVar appStateM
   case appState.gameState of
     Play (Win {}) -> render "You Win !"
-    Play (Progress {}) -> render "Started - Good luck"
+    Play (Progress _ clickCounts _) -> render $ toHtml $ "Playing (" <> show clickCounts <> " flips)"
     Play Wait -> render "Waiting"
     Menu -> render $ div_ "In Menu"
   where
@@ -287,7 +295,12 @@ renderTimerStatus appStateM = do
 
 renderTimer :: Float -> HtmlT STM ()
 renderTimer duration = do
-  div_ [id_ "Timer", class_ "w-24 text-right pr-1"] $ toHtml $ toDurationString duration
+  div_ [id_ "Timer", class_ "flex flex-row justify-between gap-2 w-24"] $ do
+    if duration > 0
+      then do
+        div_ [class_ ""] "since "
+        div_ [class_ ""] $ toHtml $ toDurationString duration <> " s"
+      else div_ ""
 
 diffTime :: UTCTime -> IO Float
 diffTime startTime = do
