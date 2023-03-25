@@ -7,6 +7,7 @@ module MemoryMaster (run, memoryMasterApp) where
 import Butler
 import Butler.Auth (PageDesc (PageDesc), PageTitle (..))
 import Butler.Database (Database, NamedParam ((:=)), dbExecute, dbQuery, dbSimpleCreate, withDatabase)
+import Butler.Display.Session (Session (..), UserName)
 import Data.Aeson (Value (Number))
 import qualified Data.ByteString.Base64 as B64 (encode)
 import Data.ByteString.Char8 as C8 (unpack)
@@ -63,12 +64,12 @@ instance DB.FromRow Score where
       <*> DB.field
       <*> DB.field
 
-addScore :: Database -> Text -> UTCTime -> Float -> Int -> Text -> IO ()
+addScore :: Database -> UserName -> UTCTime -> Float -> Int -> Text -> IO ()
 addScore db name date duration clicksCount collection =
   dbExecute
     db
     "INSERT INTO scores (name, date, duration, clicks, collection) VALUES (:name,:date,:duration,:clicks,:collection)"
-    [ ":name" := name,
+    [ ":name" := into @Text name,
       ":date" := date,
       ":duration" := duration,
       ":clicks" := clicksCount,
@@ -106,6 +107,7 @@ startMM db ctx = do
         app <- liftIO $ renderApp ctx.wid svgs appStateM db
         sendHtmlOnConnect app res
       AppTrigger ev -> do
+        username <- readTVarIO (ev.client.session.username)
         case ev.trigger of
           -- TriggerName "clickMenu" -> do
           --   logInfo "Got <clickMenu> game event" []
@@ -137,7 +139,7 @@ startMM db ctx = do
                 sendsHtml ctx.clients $ renderPlayStatus appStateM
                 case newState.gameState of
                   Play (Win start playDuration clicksCount) -> do
-                    liftIO $ addScore db "Guest" start playDuration clicksCount ""
+                    liftIO $ addScore db username start playDuration clicksCount ""
                     leaderBoard <- liftIO $ renderLeaderBoard db
                     sendsHtml ctx.clients leaderBoard
                   _ -> pure ()
