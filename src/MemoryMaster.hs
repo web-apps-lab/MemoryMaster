@@ -79,7 +79,7 @@ getTopScores :: Database -> Integer -> Text -> IO [Score]
 getTopScores db limit collection =
   dbQuery
     db
-    "SELECT * from scores WHERE collection = :collection ORDER BY duration ASC, clicks ASC LIMIT :limit"
+    "SELECT * from scores WHERE collection = :collection ORDER BY clicks ASC, duration ASC LIMIT :limit"
     [":collection" := collection, ":limit" := show limit]
 
 diffTimeToFloat :: UTCTime -> UTCTime -> Float
@@ -231,11 +231,11 @@ renderApp wid cols appStateM db = do
   timerStatus <- renderTimerStatus appStateM
   pure $ div_ [id_ (withWID wid "w"), class_ "container mx-auto"] $ do
     div_ [id_ (withWID wid "w"), class_ "flex flex-row justify-center"] $ do
-      div_ [id_ "MSMain", class_ "min-w-fit max-w-fit border-2 rounded border-gray-400 bg-gray-100"] $ do
+      div_ [id_ "MSMain", class_ "min-w-fit max-w-fit border-2 rounded border-indigo-200 bg-slate-50"] $ do
         div_ [id_ "AppMain", class_ "flex flex-row justify-center"] $ do
           div_ [class_ "grow min-w-min max-w-screen-2xl"] $ do
             div_ [class_ "flex-col justify-between h-full"] $ do
-              div_ [class_ "flex justify-around m-1"] $ do
+              div_ [class_ "flex justify-around m-1 font-semibold bg-indigo-200"] $ do
                 -- button "clickMenu" "Menu"
                 renderPlayStatus appStateM
                 timerStatus
@@ -246,7 +246,7 @@ renderApp wid cols appStateM db = do
                     renderBoard wid cols appStateM
                     leaderboard
                 _ -> p_ "Menu"
-              div_ [class_ "flex flex-row gap-2 flex-row-reverse pr-2"] $ do
+              div_ [class_ "flex flex-row gap-2 flex-row-reverse pr-2 bg-indigo-50"] $ do
                 div_ [] (toHtml version)
                 a_
                   [ class_ "text-blue-600",
@@ -259,14 +259,14 @@ renderApp wid cols appStateM db = do
       withEvent wid evText []
         $ div_
           [ class_
-              "px-1 cursor-pointer border-2 rounded border-gray-200 whitespace-nowrap"
+              "px-1 cursor-pointer border-2 rounded border-2 border-indigo-300 whitespace-nowrap"
           ]
         $ toHtml text
 
 renderBoard :: WinID -> SVGCollections -> MemoryVar AppState -> HtmlT STM ()
 renderBoard wid cols appStateV = do
   div_ [id_ "Board", class_ "flex flex-row flex-wrap"] $ do
-    div_ [class_ "basis-1/2 min-w-fit grow bg-green-400"] $ do
+    div_ [class_ "basis-1/2 min-w-fit grow"] $ do
       div_ [class_ "m-2 grid grid-flow-row-dense gap-2 grid-cols-6 grid-rows-3 justify-items-center"] $ do
         mapM_ (renderCard wid cols appStateV) [0 .. 23]
 
@@ -331,7 +331,7 @@ renderCard wid cols appStateV cardId = do
               img_ [src_ $ getSVGInline appState]
       Card _ TurnedWaitPair -> do
         div_ [class_ boxes_style] $
-          div_ [class_ "bg-gray-100"] $
+          div_ [class_ "bg-indigo-100"] $
             img_ [src_ $ getSVGInline appState]
   where
     getSVGInline :: AppState -> Text
@@ -340,7 +340,7 @@ renderCard wid cols appStateV cardId = do
           svg = fromMaybe (error "no svg") $ getSVGByName cols appState.collectionName svgName
           svgB64 = B64.encode svg
        in "data:image/svg+xml;base64," <> from (C8.unpack svgB64)
-    boxes_style = "w-14 md:w-24 lg:w-32 h-14 md:h-24 lg:h-32 shadow shadow-black bg-yellow-100 border-2 rounded border-pink-100"
+    boxes_style = "w-14 md:w-24 lg:w-32 h-14 md:h-24 lg:h-32 shadow shadow-black bg-yellow-50 border-2 rounded border-pink-100"
     cardIdHX = encodeVal [("index", Number $ fromInteger $ toInteger cardId)]
     cardDivId = from $ "Card" <> show cardId
 
@@ -348,26 +348,32 @@ renderLeaderBoard :: Database -> IO (HtmlT STM ())
 renderLeaderBoard db = do
   scores <- getTopScores db 10 ""
   pure $
-    div_ [id_ "LeaderBoard"] $
+    div_ [id_ "LeaderBoard", class_ "m-1"] $
       case length scores of
         0 -> p_ "The leaderboard is empty. Be the first to appear here !"
         _ -> ol_ [] $ do
           header
-          mapM_ displayScoreLine scores
+          mapM_ displayScoreLine (zip [0 ..] scores)
   where
-    displayScoreLine :: Score -> HtmlT STM ()
-    displayScoreLine Score {..} = do
-      li_ [] $ div_ [class_ "grid grid-cols-5 gap-1 text-left"] $ do
-        div_ [class_ "col-span-1"] $
-          toHtml $
-            formatTime defaultTimeLocale "%F" scoreDate
-        div_ [class_ "col-span-2"] $ toHtml scoreName
-        div_ [class_ "col-span-1"] $ toHtml (show scoreClicks)
-        div_ [class_ "col-span-1 text-right"] $ toHtml $ toDurationString scoreDuration
+    displayScoreLine :: (Int, Score) -> HtmlT STM ()
+    displayScoreLine (index, Score {..}) = do
+      li_ []
+        $ div_
+          [ class_ $
+              "grid grid-cols-6 gap-1 pl-1 pr-1 text-left "
+                <> if even index then "bg-white" else ""
+          ]
+        $ do
+          div_ [class_ "col-span-2"] $
+            toHtml $
+              formatTime defaultTimeLocale "%F" scoreDate
+          div_ [class_ "col-span-2"] $ toHtml scoreName
+          div_ [class_ "col-span-1"] $ toHtml (show scoreClicks)
+          div_ [class_ "col-span-1 text-right"] $ toHtml $ toDurationString scoreDuration
     header :: HtmlT STM ()
     header = do
-      li_ [] $ div_ [class_ "grid grid-cols-5 gap-1 border border-gray-600 font-semibold text-left"] $ do
-        div_ [class_ "col-span-1"] "Date"
+      li_ [] $ div_ [class_ "grid grid-cols-6 gap-1 font-semibold text-left bg-indigo-200 pr-1 pl-1"] $ do
+        div_ [class_ "col-span-2"] "Date"
         div_ [class_ "col-span-2"] "Name"
-        div_ [class_ "col-span-1"] "Clicks"
-        div_ [class_ "col-span-1 text-right"] "Play time"
+        div_ [class_ "col-span-1"] "Flips"
+        div_ [class_ "col-span-1 text-right"] "Time"
