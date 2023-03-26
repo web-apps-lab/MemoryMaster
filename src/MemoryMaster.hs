@@ -5,9 +5,10 @@
 module MemoryMaster (run, memoryMasterApp) where
 
 import Butler
+import Butler.App (Display (..))
 import Butler.Auth (PageDesc (PageDesc), PageTitle (..))
 import Butler.Database (Database, NamedParam ((:=)), dbExecute, dbQuery, dbSimpleCreate, withDatabase)
-import Butler.Display.Session (Session (..), UserName)
+import Butler.Display.Session (Session (..), UserName, changeUsername)
 import Data.Aeson (Value (Number))
 import qualified Data.ByteString.Base64 as B64 (encode)
 import Data.ByteString.Char8 as C8 (unpack)
@@ -15,6 +16,7 @@ import Data.Time (defaultTimeLocale, diffUTCTime, formatTime)
 import qualified Database.SQLite.Simple as DB
 import MemoryMaster.Engine
 import Text.Printf (printf)
+import qualified XStatic.Remixicon as XStatic
 import Prelude
 
 memoryMasterApp :: Database -> App
@@ -24,7 +26,7 @@ memoryMasterApp db =
       title = "Memory Master"
       description = "MemoryMaster"
       size = Nothing
-      xfiles = mempty
+      xfiles = [] <> XStatic.remixicon
       start = startMM db
       acceptFiles = Nothing
    in App {..}
@@ -109,8 +111,23 @@ startMM db ctx = do
       AppTrigger ev -> do
         username <- readTVarIO (ev.client.session.username)
         case ev.trigger of
-          -- TriggerName "clickMenu" -> do
-          --   logInfo "Got <clickMenu> game event" []
+          TriggerName "clickAccount" -> do
+            logInfo "Got <clickAccount> game event" []
+            sendsHtml ctx.clients $ renderSetAccountForm ctx.wid username
+          TriggerName "setAccount" -> do
+            logInfo "Got <setAccount> game event" ["body" .= ev]
+            case ev.body ^? key "playerName" . _JSON of
+              Just playerName -> do
+                success <- changeUsername ctx.shared.display.sessions ev.client.session playerName
+                if success || username == playerName
+                  then do
+                    logInfo "setAcount success" ["username" .= playerName]
+                    sendsHtml ctx.clients $ div_ [id_ "SettingsAccount"] ""
+                  else do
+                    logInfo "setAcount failed" ["username" .= playerName]
+                    sendsHtml ctx.clients $ div_ [id_ "SettingsAccountNotice"] $ do
+                      p_ [class_ "text-red-500"] "Username already used"
+              Nothing -> pure ()
           TriggerName "clickRestart" -> do
             logInfo "Got <clickRestart> game event" []
             (newBoard, _) <- liftIO $ mkBoard svgs
@@ -237,11 +254,13 @@ renderApp wid cols appStateM db = do
         div_ [id_ "AppMain", class_ "flex flex-row justify-center"] $ do
           div_ [class_ "grow min-w-min max-w-screen-2xl"] $ do
             div_ [class_ "flex-col justify-between h-full"] $ do
-              div_ [class_ "flex justify-around m-1 font-semibold bg-indigo-200"] $ do
-                -- button "clickMenu" "Menu"
+              div_ [class_ "flex justify-between m-1 pl-2 pr-2 font-semibold bg-indigo-200"] $ do
                 renderPlayStatus appStateM
                 timerStatus
-                button "clickRestart" "Restart"
+                div_ [class_ "flex gap-3 justify-end"] $ do
+                  buttonRestart
+                  buttonAccount
+              div_ [id_ "SettingsAccount"] ""
               case appState.gameState of
                 Play _ -> do
                   div_ [class_ ""] $ do
@@ -256,14 +275,12 @@ renderApp wid cols appStateM db = do
                   ]
                   "MemoryMaster"
   where
-    button :: Text -> Text -> HtmlT STM ()
-    button evText text =
-      withEvent wid evText []
-        $ div_
-          [ class_
-              "px-1 cursor-pointer border-2 rounded border-2 border-indigo-300 whitespace-nowrap"
-          ]
-        $ toHtml text
+    buttonRestart :: HtmlT STM ()
+    buttonRestart =
+      withEvent wid "clickRestart" [] $ i_ [class_ "cursor-pointer ri-restart-line", title_ "Restart"] mempty
+    buttonAccount :: HtmlT STM ()
+    buttonAccount =
+      withEvent wid "clickAccount" [] $ i_ [class_ "cursor-pointer ri-user-fill", title_ "Account"] mempty
 
 renderBoard :: WinID -> SVGCollections -> MemoryVar AppState -> HtmlT STM ()
 renderBoard wid cols appStateV = do
@@ -272,13 +289,35 @@ renderBoard wid cols appStateV = do
       div_ [class_ "m-2 grid grid-flow-row-dense gap-2 grid-cols-6 grid-rows-3 justify-items-center"] $ do
         mapM_ (renderCard wid cols appStateV) [0 .. 23]
 
+renderSetAccountForm :: WinID -> UserName -> HtmlT STM ()
+renderSetAccountForm wid username =
+  div_ [id_ "SettingsAccount", class_ "pr-2 pl-2"] $ do
+    div_ [id_ "SettingsAccountNotice"] ""
+    withEvent wid "setAccount" [] $ do
+      form_ [class_ "w-full"] $ do
+        label_ [class_ "font-semibold"] "Set your name"
+        input_
+          [ type_ "text",
+            name_ "playerName",
+            value_ (into @Text username),
+            placeholder_ "Guest",
+            size_ "15",
+            maxlength_ "15",
+            class_ "h-8 ml-1 text-center border border-slate-300 rounded-md focus:border-slate-400"
+          ]
+        button_
+          [ type_ "submit",
+            class_ "ml-1 border-2 border-indigo-200 rounded"
+          ]
+          "Submit"
+
 renderPlayStatus :: MemoryVar AppState -> HtmlT STM ()
 renderPlayStatus appStateM = do
   appState <- lift $ readMemoryVar appStateM
   case appState.gameState of
     Play (Win {}) -> render "You Win !"
     Play (Progress _ clickCounts _) -> render $ toHtml $ "Playing (" <> show clickCounts <> " flips)"
-    Play Wait -> render "Waiting"
+    Play Wait -> render "Waiting for first card flip"
     Menu -> render $ div_ "In Menu"
   where
     render :: HtmlT STM () -> HtmlT STM ()

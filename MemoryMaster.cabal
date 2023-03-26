@@ -43,6 +43,7 @@ common common-options
                     , text
                     , time
                     , witch
+                    , xstatic-remixicon
 
 library
     import:           common-options
