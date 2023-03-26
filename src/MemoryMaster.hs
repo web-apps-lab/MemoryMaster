@@ -23,8 +23,8 @@ memoryMasterApp :: Database -> App
 memoryMasterApp db =
   let name = "Memory Master"
       tags = mempty
-      title = "Memory Master"
-      description = "MemoryMaster"
+      title = "Memory Master - Concentration game - Matching card game - Shinkei-suijaku - Pexeso - Pelmanism"
+      description = "Memory Master is a mini card game where the goal is to match pair in a minimum amount of time."
       size = Nothing
       xfiles = [] <> XStatic.remixicon
       start = startMM db
