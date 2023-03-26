@@ -101,7 +101,7 @@ startMM db ctx = do
           }
       memAddr = "memory-master-" <> showT ctx.wid <> ".bin"
   (_, appStateM) <- newProcessMemory (from memAddr) (pure appState)
-  spawnThread_ $ asyncTimerUpdateThread appStateM ctx.clients
+  spawnThread_ $ asyncTimerUpdateThread appStateM ctx.shared.clients
   forever $ do
     res <- atomically (readPipe ctx.pipe)
     case res of
@@ -113,7 +113,7 @@ startMM db ctx = do
         case ev.trigger of
           TriggerName "clickAccount" -> do
             logInfo "Got <clickAccount> game event" []
-            sendsHtml ctx.clients $ renderSetAccountForm ctx.wid username
+            sendsHtml ctx.shared.clients $ renderSetAccountForm ctx.wid username
           TriggerName "setAccount" -> do
             logInfo "Got <setAccount> game event" ["body" .= ev]
             case ev.body ^? key "playerName" . _JSON of
@@ -122,10 +122,10 @@ startMM db ctx = do
                 if success || username == playerName
                   then do
                     logInfo "setAcount success" ["username" .= playerName]
-                    sendsHtml ctx.clients $ div_ [id_ "SettingsAccount"] ""
+                    sendsHtml ctx.shared.clients $ div_ [id_ "SettingsAccount"] ""
                   else do
                     logInfo "setAcount failed" ["username" .= playerName]
-                    sendsHtml ctx.clients $ div_ [id_ "SettingsAccountNotice"] $ do
+                    sendsHtml ctx.shared.clients $ div_ [id_ "SettingsAccountNotice"] $ do
                       p_ [class_ "text-red-500"] "Username already used"
               Nothing -> pure ()
           TriggerName "clickRestart" -> do
@@ -138,9 +138,9 @@ startMM db ctx = do
                     cardsToRender = mempty,
                     gameState = Play Wait
                   }
-            sendsHtml ctx.clients $ renderBoard ctx.wid svgs appStateM
-            sendsHtml ctx.clients $ renderPlayStatus appStateM
-            sendsHtml ctx.clients $ renderTimer 0.0
+            sendsHtml ctx.shared.clients $ renderBoard ctx.wid svgs appStateM
+            sendsHtml ctx.shared.clients $ renderPlayStatus appStateM
+            sendsHtml ctx.shared.clients $ renderTimer 0.0
           TriggerName "clickCard" -> do
             logInfo "Got <clickCard> game event" ["body" .= ev.body]
             case ev.body ^? key "index" . _Integer of
@@ -151,14 +151,14 @@ startMM db ctx = do
                   modifyMemoryVar appStateM (handleCardClick (fromInteger $ toInteger _index) now)
                   readMemoryVar appStateM
                 mapM_
-                  (sendsHtml ctx.clients . renderCard ctx.wid svgs appStateM)
+                  (sendsHtml ctx.shared.clients . renderCard ctx.wid svgs appStateM)
                   newState.cardsToRender
-                sendsHtml ctx.clients $ renderPlayStatus appStateM
+                sendsHtml ctx.shared.clients $ renderPlayStatus appStateM
                 case newState.gameState of
                   Play (Win start playDuration clicksCount) -> do
                     liftIO $ addScore db username start playDuration clicksCount ""
                     leaderBoard <- liftIO $ renderLeaderBoard db
-                    sendsHtml ctx.clients leaderBoard
+                    sendsHtml ctx.shared.clients leaderBoard
                   _ -> pure ()
               Nothing -> pure ()
           _ -> pure ()
@@ -235,7 +235,7 @@ startMM db ctx = do
                 Turned -> (Turned, Nothing)
            in (card {cardStatus = newCardStatus}, cardToRender)
 
-withEvent :: Monad m => WinID -> Text -> [Attribute] -> HtmlT m () -> HtmlT m ()
+withEvent :: Monad m => AppID -> Text -> [Attribute] -> HtmlT m () -> HtmlT m ()
 withEvent wid tId tAttrs elm = with elm ([id_ (withWID wid tId), wsSend' ""] <> tAttrs)
   where
     wsSend' = makeAttribute "ws-send"
@@ -243,7 +243,7 @@ withEvent wid tId tAttrs elm = with elm ([id_ (withWID wid tId), wsSend' ""] <> 
 version :: Text
 version = "1.0.0"
 
-renderApp :: WinID -> SVGCollections -> MemoryVar AppState -> Database -> IO (HtmlT STM ())
+renderApp :: AppID -> SVGCollections -> MemoryVar AppState -> Database -> IO (HtmlT STM ())
 renderApp wid cols appStateM db = do
   appState <- atomically $ readMemoryVar appStateM
   leaderboard <- renderLeaderBoard db
@@ -282,14 +282,14 @@ renderApp wid cols appStateM db = do
     buttonAccount =
       withEvent wid "clickAccount" [] $ i_ [class_ "cursor-pointer ri-user-fill", title_ "Account"] mempty
 
-renderBoard :: WinID -> SVGCollections -> MemoryVar AppState -> HtmlT STM ()
+renderBoard :: AppID -> SVGCollections -> MemoryVar AppState -> HtmlT STM ()
 renderBoard wid cols appStateV = do
   div_ [id_ "Board", class_ "flex flex-row flex-wrap"] $ do
     div_ [class_ "basis-1/2 min-w-fit grow"] $ do
       div_ [class_ "m-2 grid grid-flow-row-dense gap-2 grid-cols-6 grid-rows-3 justify-items-center"] $ do
         mapM_ (renderCard wid cols appStateV) [0 .. 23]
 
-renderSetAccountForm :: WinID -> UserName -> HtmlT STM ()
+renderSetAccountForm :: AppID -> UserName -> HtmlT STM ()
 renderSetAccountForm wid username =
   div_ [id_ "SettingsAccount", class_ "pr-2 pl-2"] $ do
     div_ [id_ "SettingsAccountNotice"] ""
@@ -351,7 +351,7 @@ diffTime startTime = do
 toDurationString :: Float -> String
 toDurationString = printf "%1.f"
 
-renderCard :: WinID -> SVGCollections -> MemoryVar AppState -> CardId -> HtmlT STM ()
+renderCard :: AppID -> SVGCollections -> MemoryVar AppState -> CardId -> HtmlT STM ()
 renderCard wid cols appStateV cardId = do
   appState <- lift $ readMemoryVar appStateV
   div_ [id_ cardDivId] $ do
