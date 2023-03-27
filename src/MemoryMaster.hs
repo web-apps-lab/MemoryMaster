@@ -5,7 +5,7 @@
 module MemoryMaster (run, memoryMasterApp) where
 
 import Butler
-import Butler.App (Display (..))
+import Butler.App (Display (..), withEvent)
 import Butler.Auth (PageDesc (PageDesc), PageTitle (..))
 import Butler.Database (Database, NamedParam ((:=)), dbExecute, dbQuery, dbSimpleCreate, withDatabase)
 import Butler.Display.Session (Session (..), UserName, changeUsername)
@@ -235,11 +235,6 @@ startMM db ctx = do
                 Turned -> (Turned, Nothing)
            in (card {cardStatus = newCardStatus}, cardToRender)
 
-withEvent :: Monad m => AppID -> Text -> [Attribute] -> HtmlT m () -> HtmlT m ()
-withEvent wid tId tAttrs elm = with elm ([id_ (withWID wid tId), wsSend' ""] <> tAttrs)
-  where
-    wsSend' = makeAttribute "ws-send"
-
 version :: Text
 version = "1.0.0"
 
@@ -357,7 +352,7 @@ renderCard wid cols appStateV cardId = do
   div_ [id_ cardDivId] $ do
     case getCardByCardId appState.board cardId of
       Card _ Closed -> div_ [class_ "cursor-pointer"] $ do
-        withEvent wid "clickCard" [cardIdHX] $
+        withEvent wid "clickCard" cardIdHX $
           div_ [class_ boxes_style] ""
       Card _ Turned -> do
         div_ [class_ boxes_style] $ img_ [src_ $ getSVGInline appState]
@@ -368,7 +363,7 @@ renderCard wid cols appStateV cardId = do
       Card _ TurnedMatchFail -> do
         div_ [class_ boxes_style] $
           div_ [class_ "bg-red-300 cursor-pointer"] $
-            withEvent wid "clickCard" [cardIdHX] $
+            withEvent wid "clickCard" cardIdHX $
               img_ [src_ $ getSVGInline appState]
       Card _ TurnedWaitPair -> do
         div_ [class_ boxes_style] $
@@ -382,7 +377,7 @@ renderCard wid cols appStateV cardId = do
           svgB64 = B64.encode svg
        in "data:image/svg+xml;base64," <> from (C8.unpack svgB64)
     boxes_style = "w-14 md:w-24 lg:w-32 h-14 md:h-24 lg:h-32 shadow shadow-black bg-yellow-50 border-2 rounded border-pink-100"
-    cardIdHX = encodeVal [("index", Number $ fromInteger $ toInteger cardId)]
+    cardIdHX = [("index", Number $ fromInteger $ toInteger cardId)]
     cardDivId = from $ "Card" <> show cardId
 
 renderLeaderBoard :: Database -> IO (HtmlT STM ())
