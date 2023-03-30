@@ -130,11 +130,12 @@ startMM db ctx = do
               Nothing -> pure ()
           TriggerName "clickRestart" -> do
             logInfo "Got <clickRestart> game event" []
-            (newBoard, _) <- liftIO $ mkBoard svgs
+            (newBoard, newCollectionName) <- liftIO $ mkBoard svgs
             atomically $ do
               modifyMemoryVar appStateM $ \s ->
                 s
                   { board = newBoard,
+                    collectionName = newCollectionName,
                     cardsToRender = mempty,
                     gameState = Play Wait
                   }
