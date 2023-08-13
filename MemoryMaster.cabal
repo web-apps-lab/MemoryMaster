@@ -1,6 +1,6 @@
 cabal-version:      2.4
 name:               MemoryMaster
-version:            0.1.0.0
+version:            1.0.1
 homepage:           https://github.com/web-apps-top/MemoryMaster/README.md
 bug-reports:        https://github.com/web-apps-top/MemoryMaster/issues
 synopsis:           MemoryMaster

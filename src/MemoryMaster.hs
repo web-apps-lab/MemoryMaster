@@ -19,6 +19,9 @@ import Text.Printf (printf)
 import qualified XStatic.Remixicon as XStatic
 import Prelude
 
+version :: Text
+version = "1.0.1"
+
 memoryMasterApp :: Database -> App
 memoryMasterApp db =
     let name = "Memory Master"
@@ -238,9 +241,6 @@ startMM db ctx = do
                     Turned -> (Turned, Nothing)
              in (card{cardStatus = newCardStatus}, cardToRender)
 
-version :: Text
-version = "1.0.0"
-
 renderApp :: AppID -> SVGCollections -> MemoryVar AppState -> Database -> IO (HtmlT STM ())
 renderApp wid cols appStateM db = do
     appState <- atomically $ readMemoryVar appStateM
@@ -313,8 +313,8 @@ renderPlayStatus :: MemoryVar AppState -> HtmlT STM ()
 renderPlayStatus appStateM = do
     appState <- lift $ readMemoryVar appStateM
     case appState.gameState of
-        Play (Win{}) -> render "You Win !"
-        Play (Progress _ clickCounts _) -> render $ toHtml $ "Playing (" <> show clickCounts <> " flips)"
+        Play (Win _ _ clickCounts) -> render . toHtml $ "You Win " <> "(with " <> show clickCounts <> " flips) !"
+        Play (Progress _ clickCounts _) -> render . toHtml $ "Playing (" <> show clickCounts <> " flips)"
         Play Wait -> render "Waiting for first card flip"
         Menu -> render $ div_ "In Menu"
   where
